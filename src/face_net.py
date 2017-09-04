@@ -1,9 +1,13 @@
 import os
 import re
+import math
 import argparse
-import tensorflow as tf
-from tensorflow.python.platform import gfile
 
+import numpy as np
+import tensorflow as tf
+
+import model
+import dataset
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -38,75 +42,66 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def load_model(model):
-    # Check if the model is a model directory (containing a metagraph and a checkpoint file)
-    #  or if it is a protobuf file with a frozen graph
-    model_exp = os.path.expanduser(model)
-    if os.path.isfile(model_exp):
-        print('Model filename: %s' % model_exp)
-        with gfile.FastGFile(model_exp, 'rb') as f:
-            graph_def = tf.GraphDef()
-            graph_def.ParseFromString(f.read())
-            tf.import_graph_def(graph_def, name='')
-    else:
-        print('Model directory: %s' % model_exp)
-        meta_file, ckpt_file = get_model_filenames(model_exp)
+def get_embeddings_from_data_set(data_set_dir, model_dir, image_size, batch_size, tf_session):
+    # get data set
+    data_set = dataset.get_dataset(data_set_dir)
+    # Check that there are at least one training image per class
+    for cls in data_set:
+        assert len(cls.image_paths) > 0, 'There must be at least one image for each class in the dataset'
 
-        print('Metagraph file: %s' % meta_file)
-        print('Checkpoint file: %s' % ckpt_file)
+    image_paths, image_labels = dataset.get_image_paths_and_labels(data_set)
 
-        saver = tf.train.import_meta_graph(os.path.join(model_exp, meta_file))
-        saver.restore(tf.get_default_session(), os.path.join(model_exp, ckpt_file))
+    # load pretrained model
+    model.load_model(model_dir)
+
+    # Get input and output tensors
+    images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+    embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+    phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+    embedding_size = embeddings.get_shape()[1]
+
+    # Run forward pass to calculate embeddings
+    print('Calculating features for images')
+    nrof_images = len(image_paths)
+    nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / args.batch_size))
+    emb_array = np.zeros((nrof_images, embedding_size))
+    for i in range(nrof_batches_per_epoch):
+        start_index = i * batch_size
+        end_index = min((i + 1) * batch_size, nrof_images)
+        paths_batch = image_paths[start_index:end_index]
+        images = dataset.load_data(paths_batch, False, False, image_size)
+        feed_dict = {images_placeholder: images, phase_train_placeholder: False}
+        emb_array[start_index:end_index, :] = tf_session.run(embeddings, feed_dict=feed_dict)
+    return {"image_embeddings": emb_array, "image_labels": image_labels, "class_names": {data_set[0].name: 0, data_set[1].name: 1}}
 
 
-def get_model_filenames(model_dir):
-    files = os.listdir(model_dir)
-    meta_files = [s for s in files if s.endswith('.meta')]
-    if len(meta_files)==0:
-        raise ValueError('No meta file found in the model directory (%s)' % model_dir)
-    elif len(meta_files)>1:
-        raise ValueError('There should not be more than one meta file in the model directory (%s)' % model_dir)
-    meta_file = meta_files[0]
-    meta_files = [s for s in files if '.ckpt' in s]
-    max_step = -1
-    for f in files:
-        step_str = re.match(r'(^model-[\w\- ]+.ckpt-(\d+))', f)
-        if step_str is not None and len(step_str.groups())>=2:
-            step = int(step_str.groups()[1])
-            if step > max_step:
-                max_step = step
-                ckpt_file = step_str.groups()[0]
-    return meta_file, ckpt_file
+def get_embedding_from_image(image_path, image_size, model_dir, tf_session):
+    # read image
+    img = dataset.read_image(image_path, False, False, image_size)
+
+    # load pretrained model
+    model.load_model(model_dir)
+
+    # Get input and output tensors
+    images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
+    embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
+    phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+    embedding_size = embeddings.get_shape()[1]
+
+    feed_dict = {images_placeholder: img, phase_train_placeholder: False}
+    embedding = tf_session.run(embeddings, feed_dict=feed_dict)
+    return embedding
 
 
 if __name__ == '__main__':
     face_net_model_pb = '../model/facenet/20170512-110547.pb'
     args = parse_arguments()
     args.model = face_net_model_pb
+    args.data_dir = '/home/meizu/WORK/public_dataset/test_face'
+
+    test_image = '../images/faces.jpg'
     with tf.Graph().as_default():
         with tf.Session() as sess:
-            # load pretrained model
-            load_model(args.model)
-
-            # Get input and output tensors
-            images_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
-            embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0")
-            phase_train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
-            embedding_size = embeddings.get_shape()[1]
-
-            # Run forward pass to calculate embeddings
-            print('Calculating features for images')
-            nrof_images = len(paths)
-            nrof_batches_per_epoch = int(math.ceil(1.0 * nrof_images / args.batch_size))
-            emb_array = np.zeros((nrof_images, embedding_size))
-            for i in range(nrof_batches_per_epoch):
-                start_index = i * args.batch_size
-                end_index = min((i + 1) * args.batch_size, nrof_images)
-                paths_batch = paths[start_index:end_index]
-                images = facenet.load_data(paths_batch, False, False, args.image_size)
-                feed_dict = {images_placeholder: images, phase_train_placeholder: False}
-                emb_array[start_index:end_index, :] = sess.run(embeddings, feed_dict=feed_dict)
-
-            classifier_filename_exp = os.path.expanduser(args.classifier_filename)
-
-    print ''
+            # data_set_embeddings = get_embeddings_from_data_set(args.data_dir, args.model, args.image_size, args.batch_size, sess)
+            image_embedding = get_embedding_from_image(test_image, args.image_size, args.model, sess)
+            print ''
