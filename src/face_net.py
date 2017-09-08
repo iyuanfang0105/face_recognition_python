@@ -9,6 +9,7 @@ import tensorflow as tf
 import model
 import dataset
 
+
 def parse_arguments():
     parser = argparse.ArgumentParser()
 

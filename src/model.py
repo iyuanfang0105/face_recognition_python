@@ -3,6 +3,7 @@ import re
 import tensorflow as tf
 from tensorflow.python.platform import gfile
 
+import mlp
 
 def load_model(model):
     # Check if the model is a model directory (containing a metagraph and a checkpoint file)
@@ -44,14 +45,23 @@ def get_model_filenames(model_dir):
                 ckpt_file = step_str.groups()[0]
     return meta_file, ckpt_file
 
-def build_model(model_name):
-    print ''
+
+def build_model(model):
+    if model.name == 'MLP':
+        print "Starting build a model: " + model.name
+        model.build_model()
 
 
 if __name__ == '__main__':
     model_dir = '../model/facenet'
 
-    with tf.Graph().as_default():
-        with tf.Session() as sess:
-            load_model(model_dir)
-            print ''
+    # with tf.Graph().as_default():
+    #     with tf.Session() as sess:
+    #         load_model(model_dir)
+    #         print ''
+
+    # test build model
+    layers_name = ['input', 'h1', 'h2', 'output']
+    neurons_num = [4096, 1024, 256,  2]
+    mlp = mlp.MLP(layers_names=layers_name, neurons_num=neurons_num)
+    build_model(mlp)
